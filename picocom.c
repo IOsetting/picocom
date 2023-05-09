@@ -35,6 +35,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <limits.h>
 #ifdef USE_FLOCK
@@ -101,6 +102,7 @@ const char *flow_str[] = {
 #define KEY_STATUS  CKEY('v') /* show program options */
 #define KEY_HELP    CKEY('h') /* show help (same as [C-k]) */
 #define KEY_KEYS    CKEY('k') /* show available command keys */
+#define KEY_TIMESTAMP CKEY('n') /* show timestamp */
 #define KEY_SEND    CKEY('s') /* send file */
 #define KEY_RECEIVE CKEY('r') /* receive file */
 #define KEY_HEX     CKEY('w') /* write hex */
@@ -219,9 +221,10 @@ struct {
     int raise_rts;
     int raise_dtr;
     int quiet;
+    int timestamp;
 } opts = {
     .port = NULL,
-    .baud = 9600,
+    .baud = 115200,
     .flow = FC_NONE,
     .parity = P_NONE,
     .databits = 8,
@@ -248,7 +251,8 @@ struct {
     .lower_dtr = 0,
     .raise_rts = 0,
     .raise_dtr = 0,
-    .quiet = 0
+    .quiet = 0,
+    .timestamp = 0
 };
 
 int sig_exit = 0;
@@ -1040,6 +1044,8 @@ show_keys()
               KEYC(KEY_TOG_RTS));
     fd_printf(STO, "*** [C-%c] : Send break\r\n",
               KEYC(KEY_BREAK));
+    fd_printf(STO, "*** [C-%c] : Toggle display timestamp\r\n",
+              KEYC(KEY_TIMESTAMP));
     fd_printf(STO, "*** [C-%c] : Toggle local echo\r\n",
               KEYC(KEY_LECHO));
     fd_printf(STO, "*** [C-%c] : Write hex\r\n",
@@ -1378,6 +1384,11 @@ do_command (unsigned char c)
         term_break(tty_fd);
         fd_printf(STO, "\r\n*** break sent ***\r\n");
         break;
+    case KEY_TIMESTAMP:
+        opts.timestamp = ! opts.timestamp;
+        fd_printf(STO, "\r\n*** display timestamp: %s ***\r\n",
+                  opts.timestamp ? "yes" : "no");
+        break;
     default:
         break;
     }
@@ -1423,6 +1434,7 @@ loop(void)
 
     while ( ! sig_exit ) {
         struct timeval tv, *ptv;
+        char s[32];
 
         ptv = NULL;
         FD_ZERO(&rdset);
@@ -1522,6 +1534,12 @@ loop(void)
                 if ( errno != EAGAIN && errno != EWOULDBLOCK )
                     fatal("read from port failed: %s", strerror(errno));
             } else {
+                if (opts.timestamp)
+                {
+                    gettimeofday(&tv, NULL);
+                    sprintf(s, "%02ld:%02ld:%02ld.%03ld ", (tv.tv_sec % 86400) / 3600, (tv.tv_sec % 86400 % 3600) / 60, tv.tv_sec % 86400 % 3600 % 60, tv.tv_usec / 1000);
+                    write(STO, s, 13);
+                }
                 int i;
                 char *bmp = &buff_map[0];
                 if ( opts.log_filename )
@@ -1731,7 +1749,7 @@ parse_args(int argc, char *argv[])
         /* no default error messages printed. */
         opterr = 0;
 
-        c = getopt_long(argc, argv, "hirulcqXnv:s:r:e:f:b:y:d:p:g:t:x:",
+        c = getopt_long(argc, argv, "hirulcqXnNv:s:r:e:f:b:y:d:p:g:t:x:",
                         longOptions, &optionIndex);
 
         if (c < 0)
@@ -1783,6 +1801,9 @@ parse_args(int argc, char *argv[])
             break;
         case 'n':
             opts.noescape = 1;
+            break;
+        case 'N':
+            opts.timestamp = 1;
             break;
         case 'f':
             switch (optarg[0]) {
@@ -1978,6 +1999,7 @@ parse_args(int argc, char *argv[])
     printf("imap is        : "); print_map(opts.imap);
     printf("omap is        : "); print_map(opts.omap);
     printf("emap is        : "); print_map(opts.emap);
+    printf("timestamp is   : %s\n", opts.timestamp ? "yes" : "no");
     printf("logfile is     : %s\n", opts.log_filename ? opts.log_filename : "none");
     if ( opts.initstring ) {
         printf("initstring len : %lu bytes\n",
