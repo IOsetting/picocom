@@ -38,6 +38,7 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <limits.h>
+#include <time.h>
 #ifdef USE_FLOCK
 #include <sys/file.h>
 #endif
@@ -1385,9 +1386,9 @@ do_command (unsigned char c)
         fd_printf(STO, "\r\n*** break sent ***\r\n");
         break;
     case KEY_TIMESTAMP:
-        opts.timestamp = ! opts.timestamp;
-        fd_printf(STO, "\r\n*** display timestamp: %s ***\r\n",
-                  opts.timestamp ? "yes" : "no");
+        opts.timestamp = (opts.timestamp + 1) % 4;
+        fd_printf(STO, "\r\n*** display timestamp, format:%d ***\r\n",
+                  opts.timestamp);
         break;
     default:
         break;
@@ -1407,6 +1408,37 @@ msec2tv (struct timeval *tv, long ms)
     return tv;
 }
 
+/* print leading timestamp */
+void print_lead_str(void)
+{
+    struct timeval tv;
+    struct tm lt = {0};
+    char buff[32], buff2[64];
+
+    gettimeofday(&tv, NULL);
+    localtime_r(&(tv.tv_sec), &lt);
+
+    switch (opts.timestamp) {
+    case 3:
+        strftime(buff, sizeof(buff), "%Y-%m-%d %H:%M:%S", &lt);
+        sprintf(buff2, "%s.%03ld ", buff, tv.tv_usec / 1000);
+        write(STO, buff2, 24);
+        break;
+    case 2:
+        strftime(buff, sizeof(buff), "%H:%M:%S", &lt);
+        sprintf(buff2, "%s.%03ld ", buff, tv.tv_usec / 1000);
+        write(STO, buff2, 13);
+        break;
+    case 1:
+        strftime(buff, sizeof(buff), "%M:%S", &lt);
+        sprintf(buff2, "%s.%03ld ", buff, tv.tv_usec / 1000);
+        write(STO, buff2, 10);
+        break;
+    default:
+        break;
+    }
+}
+
 /* loop-exit reason */
 enum le_reason {
     LE_CMD,
@@ -1415,9 +1447,10 @@ enum le_reason {
     LE_SIGNAL
 };
 
-enum le_reason
-loop(void)
+enum le_reason loop(void)
 {
+    struct timeval tv, *ptv;
+
     enum {
         ST_COMMAND,
         ST_TRANSPARENT
@@ -1433,8 +1466,7 @@ loop(void)
         stdin_closed = 1;
 
     while ( ! sig_exit ) {
-        struct timeval tv, *ptv;
-        char s[32];
+        
 
         ptv = NULL;
         FD_ZERO(&rdset);
@@ -1534,12 +1566,7 @@ loop(void)
                 if ( errno != EAGAIN && errno != EWOULDBLOCK )
                     fatal("read from port failed: %s", strerror(errno));
             } else {
-                if (opts.timestamp)
-                {
-                    gettimeofday(&tv, NULL);
-                    sprintf(s, "%02ld:%02ld:%02ld.%03ld ", (tv.tv_sec % 86400) / 3600, (tv.tv_sec % 86400 % 3600) / 60, tv.tv_sec % 86400 % 3600 % 60, tv.tv_usec / 1000);
-                    write(STO, s, 13);
-                }
+                print_lead_str();
                 int i;
                 char *bmp = &buff_map[0];
                 if ( opts.log_filename )
@@ -1657,6 +1684,7 @@ show_usage(char *name)
     printf("  --sto<p>bits 1 | 2\n");
     printf("  --<e>scape <char>\n");
     printf("  --<n>o-escape\n");
+    printf("  --<N>timestamp 0 | 1 | 2 | 3\n");
     printf("  --e<c>ho\n");
     printf("  --no<i>nit\n");
     printf("  --no<r>eset\n");
@@ -1716,6 +1744,7 @@ parse_args(int argc, char *argv[])
         {"emap", required_argument, 0, 'E' },
         {"escape", required_argument, 0, 'e'},
         {"no-escape", no_argument, 0, 'n'},
+        {"timestamp", required_argument, 0, 'N'},
         {"echo", no_argument, 0, 'c'},
         {"noinit", no_argument, 0, 'i'},
         {"noreset", no_argument, 0, 'r'},
@@ -1749,7 +1778,7 @@ parse_args(int argc, char *argv[])
         /* no default error messages printed. */
         opterr = 0;
 
-        c = getopt_long(argc, argv, "hirulcqXnNv:s:r:e:f:b:y:d:p:g:t:x:",
+        c = getopt_long(argc, argv, "hirulcqXnN:v:s:r:e:f:b:y:d:p:g:t:x:",
                         longOptions, &optionIndex);
 
         if (c < 0)
@@ -1803,7 +1832,24 @@ parse_args(int argc, char *argv[])
             opts.noescape = 1;
             break;
         case 'N':
-            opts.timestamp = 1;
+            switch (optarg[0]) {
+            case '0':
+                opts.timestamp = 0;
+                break;
+            case '1':
+                opts.timestamp = 1;
+                break;
+            case '2':
+                opts.timestamp = 2;
+                break;
+            case '3':
+                opts.timestamp = 3;
+                break;
+            default:
+                fprintf(stderr, "Invalid --timestamp: %c\n", optarg[0]);
+                r = -1;
+                break;
+            }
             break;
         case 'f':
             switch (optarg[0]) {
@@ -1999,7 +2045,7 @@ parse_args(int argc, char *argv[])
     printf("imap is        : "); print_map(opts.imap);
     printf("omap is        : "); print_map(opts.omap);
     printf("emap is        : "); print_map(opts.emap);
-    printf("timestamp is   : %s\n", opts.timestamp ? "yes" : "no");
+    printf("timestamp fmt  : %d\n", opts.timestamp);
     printf("logfile is     : %s\n", opts.log_filename ? opts.log_filename : "none");
     if ( opts.initstring ) {
         printf("initstring len : %lu bytes\n",
