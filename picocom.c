@@ -1411,11 +1411,27 @@ msec2tv (struct timeval *tv, long ms)
 /* print leading timestamp */
 void print_lead_str(void)
 {
+    static long int c_ts = 0;
+    long int p_ts;
     struct timeval tv;
     struct tm lt = {0};
     char buff[32], buff2[64];
 
     gettimeofday(&tv, NULL);
+    /* Calculate the number of microseconds from last print */
+    if (tv.tv_usec > c_ts)
+    {
+        p_ts = tv.tv_usec - c_ts;
+    }
+    else
+    {
+        p_ts = tv.tv_usec + 1000000 - c_ts;
+    }
+    c_ts = tv.tv_usec;
+
+    /* If the interval is less than 1000 microseconds, skip */
+    if (p_ts < 1000) return;
+
     localtime_r(&(tv.tv_sec), &lt);
 
     switch (opts.timestamp) {
